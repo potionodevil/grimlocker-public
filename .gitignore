@@ -1,8 +1,9 @@
 .claude
-grimdb/*.exe
-grimdb/*.dll
-grimdb/*.pdb
-grimdb/*.cache
+core-rust/target/
+*.exe
+*.dll
+*.pdb
+*.cache
 *.log
 *.tmp
 *.bak

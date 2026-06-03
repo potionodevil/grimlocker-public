@@ -1,315 +1,55 @@
-# Grimlocker — Security Audit Edition
+# Grimlocker Core Engine — Security Audit Edition
 
-> **Transparent cryptographic implementation for community code review and independent security analysis.**
+[![Go 1.25+](https://img.shields.io/badge/Go-1.25+-00ADD8)](https://go.dev)
+[![Build](https://img.shields.io/badge/build-passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
----
-
-## Purpose
-
-This is the **public audit edition** of Grimlocker — a zero-trust, enterprise-grade password manager. It exposes every line of the cryptographic and security-critical code for public scrutiny while keeping proprietary infrastructure, storage logic, and UI components in the private repository.
-
-**What this enables:**
-- Independent verification of cryptographic correctness
-- Community-driven vulnerability discovery
-- Trust-through-transparency for a security product
-- Educational reference for production-grade crypto engineering
-
-**What is NOT included:**
-- Storage / database implementation (block store, VFS, compression, ingest)
-- API / WebSocket / IPC infrastructure
-- UI layer (Tauri + React)
-- Deployment configuration beyond crypto
-- Credentials, test data, or operational configs
+> **Transparent Core, Trusted Appliance.**  
+> This repository contains the publicly auditable cryptographic engine of Grimlocker — a zero-trust vault daemon.  
+> The full appliance (storage format, network layer, OS integration) remains proprietary.
 
 ---
 
-## Repository Contents
+## Philosophy
 
-```
-grimlocker-public/
-├── core-rust/                          # Rust crypto enclave (cdylib)
-│   ├── Cargo.toml
-│   ├── Cargo.lock
-│   └── src/
-│       ├── crypto.rs                   # ChaCha20-Poly1305, BLAKE3, mlock, zeroize, guard pages
-│       ├── enclave.rs                  # Secure memory enclave with mlock/VirtualLock
-│       ├── lib.rs                      # C-ABI entry points (FFI exports for Go/CGO)
-│       ├── main.rs                     # CLI state machine, IPC client, coordinate parser
-│       ├── time_guard.rs              # Dual-clock integrity verification (monotonic + wallclock)
-│       └── wipe.rs                    # 7-pass anti-forensic shredder with fsync verification
-│
-└── grimdb/                             # Go security & crypto packages
-    ├── go.mod                          # Module: github.com/grimlocker/grimdb-public
-    ├── go.sum
-    │
-    ├── cgo/
-    │   └── rustbridge.go              # Go-Rust FFI bridge (CGO bindings to core-rust cdylib)
-    │
-    ├── crypto/                         # Go Crypto Engine
-    │   ├── argon.go                    # Argon2id password hashing with calibrated parameters
-    │   ├── chacha.go                   # ChaCha20-Poly1305 AEAD encryption/decryption
-    │   ├── coordinate.go              # Key derivation from coordinate strings (BLAKE3 + HKDF)
-    │   ├── engine.go                   # Central crypto engine coordinating all primitives
-    │   ├── entropy.go                  # Secure random number generation (crypto/rand)
-    │   ├── hkdf.go                     # HKDF-SHA256 key derivation
-    │   ├── interface.go               # Provider interfaces for swappable crypto backends
-    │   ├── module.go                   # Kernel module registration and lifecycle
-    │   ├── provider.go                # Default provider implementation
-    │   └── shredder.go                # Secure memory/disk deletion with verification
-    │
-    ├── kernel/                         # Minimal kernel stubs (for compilation)
-    │   └── kernel.go                  # Event type constants, interfaces (Dispatcher, Module)
-    │
-    └── security/                       # Security Module
-        ├── audit.go                    # Cryptographic audit log with SHA-256 chaining
-        ├── constant_time.go           # Constant-time comparison primitives
-        ├── integrity.go               # Binary integrity verification (hash-checking)
-        ├── lockdown.go                # Hard/soft lockdown state machine (200-min window)
-        ├── memlock.go                  # Cross-platform memory locking interface
-        ├── memlock_unix.go            # Unix memory lock (mlock syscall)
-        ├── memlock_windows.go         # Windows memory lock (VirtualLock API)
-        ├── module.go                   # Security module registration and event handlers
-        └── session.go                 # Session management and key lifecycle
-```
+Grimlocker follows a **"Transparent Core, Trusted Appliance"** security model:
+
+| Layer | Status | Purpose |
+|-------|--------|---------|
+| **Core Engine** (`engine/`) | ✅ **Public** | ChaCha20-Poly1305 encryption, Argon2id KDF, GQL binary protocol, security state machine, kernel event bus. **Audit this.** |
+| **Rust Enclave** (`core-rust/`) | ✅ **Public** | Hardware-backed secure zeroization, BLAKE3→HKDF coordinate derivation. |
+| **Storage Layer** (`engine/storage/`) | ❌ **Private** | Vault on-disk format — kept proprietary to prevent format-specific attacks. |
+| **Appliance** (`daemon/`) | ❌ **Private** | HTTP/WebSocket servers, OS hooks, sync, config — proprietary integration logic. |
+
+**Why not fully open source?** The vault's on-disk format and the daemon's operational orchestration are kept proprietary. This prevents mass-exploitation of the specific storage format and protects the intellectual property of the appliance's operational logic — while the cryptographic core remains fully transparent for third-party audit.
 
 ---
 
-## Cryptographic Architecture
+## What's in This Repo
 
-### Key Hierarchy
+### `engine/` — Go Core Engine
 
-```
-User Password (human-memorable)
-        │
-        ▼
-   Argon2id (32 MiB memory, 3 iterations, 4 parallelism)
-        │
-        ▼
-   Master Key (32 bytes)
-        │
-        ├──► BLAKE3(Master Key) → HKDF-SHA256 → Workspace Keys (32 bytes)
-        │
-        └──► Entropy File (200-char) → Coordinate Extraction
-                │
-                ▼
-           BLAKE3 + HKDF-SHA256 → Decryption Key (32 bytes)
-```
+| Package | Description | Tests | Dependencies |
+|---------|-------------|-------|-------------|
+| `engine/crypto/` | ChaCha20-Poly1305 AEAD, Argon2id KDF, HKDF, entropy coordinate derivation, secure shredder, PQC stubs | — | `golang.org/x/crypto` |
+| `engine/security/` | Session lifecycle, lockdown manager, audit log (tamper-evident), MVK store, ZKP challenges, rate limiter, intrusion detection | — | `golang.org/x/crypto` |
+| `engine/gql/` | GrimQueryLanguage — binary frame protocol, two-stage validator (syntactic + ACL), **total injection immunity** | ✅ Fuzz-tested | stdlib only |
+| `engine/kernel/` | Event bus, dispatcher, module registry, handler builder with panic recovery + logging | ✅ Tested | stdlib only |
+| `engine/errors/` | Typed error system (GrimlockError), structured logging, stack traces, HTTP status mapping | ✅ Tested | stdlib only |
+| `engine/tools/` | Ed25519 SSH key generation (OpenSSH format, passphrase encryption) | ✅ Tested | `golang.org/x/crypto` |
+| `engine/bridge/` | RustBridge interface — abstraction over the Rust secure enclave (pure Go fallback) | — | stdlib only |
+| `engine/provider/` | Hexagonal port interfaces — `VaultProvider`, `AuthProvider`, `StorageProvider` | — | stdlib only |
+| `engine/storage/` | BlockStore interface, transactional extensions, block types (minimal — no implementation) | — | stdlib only |
 
-### Cryptographic Primitives
+### `core-rust/` — Rust Secure Enclave
 
-| Primitive | Implementation | Purpose |
-|---|---|---|
-| **Argon2id** | `crypto/argon.go` + `golang.org/x/crypto/argon2` | Password hashing with memory-hardness |
-| **ChaCha20-Poly1305** | `crypto/chacha.go` + `core-rust/crypto.rs` | AEAD encryption of all vault data |
-| **BLAKE3** | `core-rust/crypto.rs` + `crypto/coordinate.go` | Fast key derivation from entropy |
-| **HKDF-SHA256** | `crypto/hkdf.go` + `core-rust/crypto.rs` | Key expansion with info/context binding |
-| **CSPRNG** | `crypto/entropy.go` → `crypto/rand` | Entropy file generation, nonces, salts |
-| **SHA-256** | `security/audit.go` | Cryptographic audit log chaining |
+The Rust crate `grimlocker-core` provides:
+- **Secure memory zeroization** (7-pass, compiler-resistant)
+- **BLAKE3→HKDF coordinate derivation**
+- **ChaCha20-Poly1305 session key encryption**
 
-### Design Principles
-
-1. **Plaintext keys never touch Go's garbage collector.** All sensitive key material is generated, used, and zeroized exclusively in Rust's memory space via CGO FFI.
-2. **Memory-locked allocations.** `mlock` (Unix) / `VirtualLock` (Windows) prevent sensitive data from being paged to swap.
-3. **Zeroize-on-drop.** Rust's `zeroize` crate ensures key material is overwritten the moment it goes out of scope.
-4. **Guard pages.** Rust allocates protected pages before and after sensitive buffers to catch buffer overflows as segfaults.
-5. **Dual-clock integrity.** Monotonic + wall-clock cross-check prevents system clock manipulation attacks.
-
----
-
-## Rust Enclave Details
-
-### `crypto.rs` — Core Cryptographic Operations
-- ChaCha20-Poly1305 encryption/decryption via the `chacha20poly1305` crate
-- BLAKE3 hashing via the `blake3` crate
-- Memory locking with mlock/VirtualLock
-- Zeroize integration with the `zeroize` crate
-- Guard page allocation surrounding all sensitive buffers
-
-### `enclave.rs` — Secure Memory Enclave
-- Manages the lifecycle of encrypted memory regions
-- Provides `alloc()` / `dealloc()` with automatic zeroization
-- Platform-specific memory protection (pages marked as non-readable after use)
-
-### `lib.rs` — C-ABI Entry Points
-Public FFI functions exported as `extern "C"`:
-- `generate_entropy_file(path, length)` — Creates the 200-character entropy source
-- `extract_key_from_coordinates(coords, entropy)` — Derives key from coordinate positions
-- `generate_random_coordinates()` — Produces random coordinate sets
-- `secure_zero(buf, len)` — Zeroizes a buffer with compiler barrier
-- `encrypt_chacha(key, nonce, plaintext)` — AEAD encryption
-- `decrypt_chacha(key, nonce, ciphertext)` — AEAD decryption
-
-### `main.rs` — CLI State Machine
-- Implements the Rust-side IPC client for direct vault operations
-- Coordinate parser that extracts bytes from entropy at specified positions
-- Entropy file reading, validation, and coordinate-based key reconstruction
-
-### `time_guard.rs` — Dual-Clock Integrity
-- Monotonic clock (`std::time::Instant`) that cannot be manipulated by OS time changes
-- Wall-clock cross-check: if `current_wallclock < last_seen_wallclock`, time was turned backward
-- Anomaly detection: wall-clock jumps > 1 year or monotonic regression trigger wipe
-- Ticks-to-walloffset mapping stored in the `.gdb` header
-
-### `wipe.rs` — Anti-Forensic Shredder
-- 7-pass overwrite with cryptographic random data (matching exact file size)
-- `fsync` after each pass to flush OS buffers
-- File truncation to 0 bytes
-- Final `fsync` + `unlink` (file deletion)
-- Designed as best-effort on SSDs (FTL remapping caveat documented)
-
----
-
-## Go Crypto Engine Details
-
-### `argon.go` — Password Hashing
-- Argon2id with calibrated parameters: 32 MiB memory, 3 iterations, 4 degrees of parallelism
-- Produces a 32-byte hash suitable for master key derivation
-- Salt is randomly generated per vault with `crypto/rand`
-
-### `chacha.go` — AEAD Encryption
-- ChaCha20-Poly1305 via the `golang.org/x/crypto/chacha20poly1305` library
-- Nonce management with CSPRNG generation
-- Additional data (AD) binding for context-aware encryption
-
-### `coordinate.go` — Key Derivation from Coordinates
-- Parses coordinate sets from the entropy file
-- Combines extracted bytes via BLAKE3 hashing
-- Expands via HKDF-SHA256 to produce a 32-byte decryption key
-- Panic-key detection (`0,0,0` triggers disguised wipe)
-
-### `engine.go` — Central Crypto Coordinator
-- Orchestrates all cryptographic operations
-- Manages key material lifecycle (generation, usage, zeroization)
-- Provides a unified interface consumed by the storage and security modules
-
-### `entropy.go` — Secure Random Generation
-- Wraps Go's `crypto/rand` for all random bytes
-- Generates entropy files used as the basis for coordinate-based key derivation
-- Validates entropy file integrity (size, entropy density)
-
-### `hkdf.go` — Key Derivation Function
-- HKDF-SHA256 as specified in RFC 5869
-- Extract phase with salt, expand phase with info parameter
-- Used for deriving child keys from the master key
-
-### `interface.go` — Provider Interfaces
-- Defines swappable interfaces (`Engine`, `PasswordHasher`, `Encryptor`, `KeyDeriver`)
-- Enables testing with mock implementations
-- Follows Go interface segregation principles
-
-### `module.go` — Kernel Integration
-- Registers the crypto engine as a GrimDB kernel module
-- Handles lifecycle events: init, start, stop, shutdown
-- Subscribes to relevant event bus events (`AUTH.UNLOCK`, `VAULT.CREATE`, etc.)
-
-### `provider.go` — Default Provider
-- Provides the default implementation of all crypto interfaces
-- Wires Go primitives with Rust FFI calls for performance-critical paths
-
-### `shredder.go` — Secure Deletion
-- Memory zeroization with compiler optimization barriers (`runtime.KeepAlive`)
-- Disk wipe support via direct file overwrite patterns
-- Verification step to confirm all bytes were zeroized
-
----
-
-## Go Security Layer Details
-
-### `audit.go` — Cryptographic Audit Log
-- Immutable, append-only log with SHA-256 hash chaining
-- Each entry: `SHA-256(prevHash || timestamp || level || module || message || subjectID)`
-- Tampering detectable: any modification breaks the hash chain
-- Logged events: login attempts, lockdown triggers, key operations, policy violations
-
-### `constant_time.go` — Timing-Attack Protection
-- Constant-time byte and string comparisons
-- Prevents timing side-channel leakage during password/coordinate verification
-- All comparison paths execute the same number of CPU instructions
-
-### `integrity.go` — Binary Integrity Verification
-- Hashes the executing binary at startup and periodically (30-second heartbeat)
-- Compares against a known-good hash stored in the vault header
-- Watchdog triggers kernel restart if hash mismatch is detected
-
-### `lockdown.go` — Security Lockdown State Machine
-- 3 failed attempts → 200-minute lockdown window
-- During lockdown, only coordinate-based override is allowed (4 attempts max)
-- 4 failed overrides or timeout → hard wipe (self-destruct)
-- State persisted in `.gdb` header across reboots
-
-### `memlock.go` — Memory Locking Interface
-- Cross-platform abstraction over mlock/VirtualLock
-- Fallback strategies for platforms without direct support
-- Configuration for lock limits (RLIMIT_MEMLOCK on Unix)
-
-### `memlock_unix.go` — Unix Implementation
-- `mlock()` syscall via `golang.org/x/sys/unix`
-- Locks all pages containing a buffer into physical RAM
-- Prevents sensitive data from being written to swap
-
-### `memlock_windows.go` — Windows Implementation
-- `VirtualLock()` via `golang.org/x/sys/windows`
-- Equivalent semantics to Unix mlock
-- Requires `SeLockMemoryPrivilege` for large allocations
-
-### `module.go` — Security Module Registration
-- Registers the security module with the GrimDB kernel
-- Handles event subscriptions: `AUTH.ATTEMPT`, `AUTH.LOCKDOWN`, `SECURITY.AUDIT`, `SECURITY.WIPE`
-- Coordinates between audit, lockdown, integrity, and session subsystems
-
-### `session.go` — Session & Key Lifecycle
-- Manages ephemeral session keys derived from the master key
-- Automatic expiry and re-derivation on timeout
-- Zeroization of session keys on logout, timeout, or lockdown
-- Tracks active sessions for the watchdog
-
----
-
-## CGO Bridge
-
-### `rustbridge.go` — Go-Rust FFI
-- CGO bindings that load `libgrimlocker_core` (compiled Rust cdylib)
-- Type-safe Go wrappers around all `extern "C"` functions
-- Memory management: Go allocates buffers, Rust fills/encrypts/zeroizes them
-- Error translation from Rust error codes to Go errors
-- Build linkage: `// #cgo LDFLAGS: -L${SRCDIR}/../../core-rust/target/release -lgrimlocker_core`
-
----
-
-## Code Review Guide
-
-Security auditors should focus on these areas:
-
-### 1. Constant-Time Operations
-- [ ] `grimdb/security/constant_time.go`: Verify all comparison paths execute identically
-- [ ] `core-rust/src/lib.rs`: Confirm `subtle::ConstantTimeEq` usage
-- [ ] Check that password verification never short-circuits on mismatch
-
-### 2. Memory Safety (Rust)
-- [ ] `core-rust/src/crypto.rs`: Verify `unsafe` blocks are sound and minimal
-- [ ] `core-rust/src/enclave.rs`: Check guard page allocation/deallocation
-- [ ] `core-rust/src/wipe.rs`: Confirm `zeroize` crate usage after each `unsafe` block
-
-### 3. Key Material Lifecycle
-- [ ] `grimdb/security/session.go`: Verify keys are zeroized on all exit paths
-- [ ] `grimdb/crypto/engine.go`: Check key derivation does not leave intermediate material
-- [ ] `core-rust/src/lib.rs`: Confirm all FFI functions zeroize before returning
-
-### 4. Cryptographic Correctness
-- [ ] `grimdb/crypto/argon.go`: Verify Argon2id parameters (32 MiB, 3 iterations, 4 lanes)
-- [ ] `grimdb/crypto/chacha.go`: Check nonce generation and reuse prevention
-- [ ] `grimdb/crypto/hkdf.go`: Verify RFC 5869 compliance
-- [ ] `core-rust/src/crypto.rs`: Confirm AEAD tag verification before decryption
-
-### 5. Lockdown Logic
-- [ ] `grimdb/security/lockdown.go`: Verify failed attempt counter overflow
-- [ ] `grimdb/security/lockdown.go`: Confirm 200-minute window enforcement
-- [ ] `core-rust/src/time_guard.rs`: Check dual-clock integrity edge cases
-
-### 6. Error Handling
-- [ ] No plaintext keys in error messages, logs, or stack traces
-- [ ] No timing differences in error vs. success paths
-- [ ] Proper lockdown escalation on cryptographic errors
+Built as a cdylib for runtime loading (Windows: `LoadLibrary`, Unix: `dlopen`).
 
 ---
 
@@ -317,92 +57,120 @@ Security auditors should focus on these areas:
 
 ### Prerequisites
 
-| Component | Version |
-|---|---|
-| Rust | 1.75+ |
-| Go | 1.21+ |
+- Go 1.25+
+- Rust toolchain (optional — only for the enclave crate)
 
 ### Build
 
 ```bash
-# Build Rust crypto core
-cd core-rust
-cargo build --release
-# Output: target/release/libgrimlocker_core.so (Linux) / .dylib (macOS) / .dll (Windows)
-
-# Verify Go packages compile
-cd ../grimdb
-go build ./crypto/...
-go build ./security/...
-go build ./cgo
-go build ./kernel
+go build ./engine/...
 ```
+
+All 9 engine packages compile. No external dependencies beyond `golang.org/x/crypto`.
 
 ### Test
 
 ```bash
-# Rust unit tests
-cd core-rust
-cargo test --release
-
-# Go unit tests
-cd ../grimdb
-go test ./crypto/...
-go test ./security/...
-
-# Rust linting (memory safety)
-cd ../core-rust
-cargo clippy --release -- -D warnings
-
-# Go linting
-cd ../grimdb
-golangci-lint run ./...
+go test ./engine/...
 ```
 
-### Verifying Reproducibility
+```
+ok  engine/errors   0.761s
+ok  engine/gql      0.602s   (includes 10,000-iteration fuzz test)
+ok  engine/kernel   0.604s
+ok  engine/tools    0.937s
+```
 
-To confirm the public edition matches the private edition's crypto/security code:
+### Rust Enclave (optional)
 
 ```bash
-# Compare Rust core (exclude coordinates.rs which is private-only)
-diff -r grimlocker-private/core-rust/src/ grimlocker-public/core-rust/src/ \
-  --exclude=coordinates.rs
-
-# Compare Go crypto package
-diff -r grimlocker-private/grimdb/crypto/ grimlocker-public/grimdb/crypto/
-
-# Compare Go security package
-diff -r grimlocker-private/grimdb/security/ grimlocker-public/grimdb/security/
-
-# Compare CGO bridge
-diff grimlocker-private/grimdb/cgo/rustbridge.go grimlocker-public/grimdb/cgo/rustbridge.go
+cd core-rust
+cargo build --release
 ```
-
-All four diffs should produce **no output** (identical files).
 
 ---
 
-## Complete System
+## Security Properties (Auditable in this Repo)
 
-The full Grimlocker system — including storage, API, UI, deployment configs, and enterprise tiering — is available in the private edition:
+| Property | Where to Verify |
+|----------|-----------------|
+| **AEAD encryption** | `engine/crypto/chacha.go` — ChaCha20-Poly1305 via `x/crypto` |
+| **Key derivation** | `engine/crypto/argon.go` — Argon2id (128MB, 4 iterations, OWASP 2023+) |
+| **Entropy coordinate system** | `engine/crypto/coordinate.go` — HKDF-based offset derivation |
+| **Secure memory zeroization** | `engine/crypto/provider.go` + `core-rust/src/wipe.rs` |
+| **Session state machine** | `engine/security/session.go` — unlock/lock lifecycle |
+| **Brute-force protection** | `engine/security/lockdown.go` — exponential backoff → hard lockdown |
+| **Tamper-evident audit log** | `engine/security/audit.go` — SHA-256 chained hashes |
+| **Injection immunity** | `engine/gql/validator.go` — two-stage binary validation |
+| **Binary protocol** | `engine/gql/frame.go` — length-prefixed, no text parsing |
+| **Event bus** | `engine/kernel/bus.go` — gated channels, timeout-safe dispatch |
+| **Error safety** | `engine/errors/types.go` — typed codes, stack traces, no info leakage |
 
-- **grimlocker-private**: Contains `core-rust`, full `grimdb` with all modules (storage, API, SDK, config, tools, deploy), and the `ui-layer` Tauri + React frontend.
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    Public (this repo)                │
+│                                                      │
+│  ┌──────────┐  ┌──────────┐  ┌──────┐  ┌─────────┐  │
+│  │  Crypto   │  │ Security │  │ GQL  │  │  Kernel  │  │
+│  │  ChaCha20 │  │ Session  │  │Frame │  │ Event Bus│  │
+│  │  Argon2id │  │ Lockdown │  │Valid.│  │ Registry │  │
+│  │  HKDF     │  │ Audit    │  │Fuzzer│  │ Handlers │  │
+│  └────┬─────┘  └────┬─────┘  └──┬───┘  └────┬─────┘  │
+│       │              │           │            │         │
+│       └──────────────┴───────────┴────────────┘         │
+│                          │                              │
+├──────────────────────────┴──────────────────────────────┤
+│                    Private                               │
+│                                                          │
+│  ┌──────────┐  ┌──────────────┐  ┌───────────────────┐  │
+│  │ Storage  │  │  Appliance   │  │  UI (Tauri)       │  │
+│  │ Vault    │  │  HTTP/WS     │  │  React Dashboard  │  │
+│  │ On-Disk  │  │  OS Hooks    │  │  IPC Bridge       │  │
+│  │ Format   │  │  Config      │  │                   │  │
+│  └──────────┘  └──────────────┘  └───────────────────┘  │
+└──────────────────────────────────────────────────────────┘
+```
+
+The **public engine** defines interfaces that the **private appliance** implements. The appliance never sees passwords — only pre-hashed `[]byte`. The engine never opens files — only abstract handles. The boundary is enforced by Go's `internal/` package rule.
+
+---
+
+## Verification
+
+You can verify this public repository matches the private audited codebase:
+
+```bash
+# Clone both repos
+git clone https://github.com/potionodevil/grimlocker-public.git
+git clone https://github.com/potionodevil/grimlocker-private.git
+
+# Diff the public engine against the private engine (excluding storage/)
+diff -r grimlocker-public/engine grimlocker-private/grimdb/engine \
+  --exclude=storage
+```
+
+The only diff should be the module path (`grimdb` → `grimdb-public`) and the excluded `storage/` package.
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for security vulnerability disclosure.
+
+This is an **audit-focused** repository. We welcome:
+- Cryptographic review
+- Fuzzing of the GQL protocol
+- Analysis of the security state machine
+- Side-channel evaluations
+
+We do **not** accept pull requests for new features or the storage/daemon layers — those remain proprietary.
 
 ---
 
 ## License
 
-Grimlocker Core (crypto + security packages) is available under the license specified in the repository.
-
----
-
-## Reporting Security Issues
-
-If you discover a security vulnerability, please create a detailed issue in this repository. Include:
-
-- Affected file(s) and line numbers
-- Description of the vulnerability
-- Potential impact
-- Suggested fix (if known)
-
-**Responsible disclosure is appreciated.** Critical vulnerabilities will be acknowledged within 48 hours.
+MIT — see [LICENSE](LICENSE).
